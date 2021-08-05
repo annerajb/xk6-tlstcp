@@ -1,0 +1,79 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "inputs": [
+        {
+            "id": "load",
+            "type": "pickString",
+            "default": "",
+            "description": "how much load to run",
+            "options": [
+                {
+                    "value": "",
+                    "label": "single vu"
+                },
+                {
+                    "label": "100x10s",
+                    "value": "--vus 100 --duration 10s"
+                }
+            ]
+        }
+    ],
+    "tasks": [
+        {
+            "label": "run standalone-go-application",
+            "type": "shell",
+            "command": "go run tlstcp-standalone.go",
+            "problemMatcher": [
+                "$go"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label":"build xk6 module",
+            "type": "shell",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "command":"cd ../xk6 && xk6 build v0.29.0 --with github.com/annerajb/xk6-tlstcp=\"$(pwd)/../xk6-tls\"",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher":[
+                "$go"
+            ]
+        },
+        {
+            "label": "runload",
+            "type": "shell",
+            "promptOnClose": true,
+            "command":"../xk6/k6 run ${input:load} sample_test.js",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+        },
+        {
+            "label": "go build tlstcp-standalone.go && ./tlstcp-standalone",
+            "type": "shell",
+            "command": "go build tlstcp-standalone.go && ./tlstcp-standalone",
+            "problemMatcher": [
+                "$go"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
