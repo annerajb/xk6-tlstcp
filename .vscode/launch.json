@@ -10,8 +10,8 @@
             "type": "go",
             "request": "launch",
             "mode": "exec",
-            "program": "${workspaceFolder}/../xk6/k6",
-            "args": ["run" ,"../xk6-tls/sample_test.js"],"buildFlags": "asd"
+            "program": "${workspaceFolder}",
+            "args": ["run" ,"./sample_test.js"],"buildFlags": "asd"
         }
     ]
 }

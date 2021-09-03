@@ -3,20 +3,22 @@ package tlstcp
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/stats"
 
-	//"github.com/loadimpact/k6/lib/netext/httpext"
-	"github.com/loadimpact/k6/js/modules"
-	//"github.com/loadimpact/k6/stats"
+	//"go.k6.io/k6/lib/netext/httpext"
+	"go.k6.io/k6/js/modules"
+	//"go.k6.io/k6/stats"
 )
 
 // Register the extension on module initialization, available to
@@ -61,6 +63,7 @@ func (*TlsTcp) Connect(ctx context.Context, network string, addr string, root_ca
 	}
 	tlsConfig.RootCAs = roots
 	tlsConfig.MinVersion = tls.VersionTLS13
+	tlsConfig.InsecureSkipVerify = true
 	tlsConfig.CipherSuites = []uint16{
 		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 		//tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
@@ -70,10 +73,6 @@ func (*TlsTcp) Connect(ctx context.Context, network string, addr string, root_ca
 	//Todo Move this to caller or use state only
 	// tlsConfig := &tls.Config{
 	// 	MinVersion: tls.VersionTLS13,
-	// },
-	// 	CurvePreferences:   []tls.CurveID{tls.X25519},
-	// 	RootCAs:            roots,
-	// }
 
 	start := time.Now()
 	conon, err := state.Dialer.DialContext(ctx, network, addr)
@@ -81,17 +80,9 @@ func (*TlsTcp) Connect(ctx context.Context, network string, addr string, root_ca
 	connectionDuration := stats.D(connectionEnd.Sub(start))
 
 	sampleTags := stats.IntoSampleTags(&tags)
-	stats.PushIfNotDone(ctx, state.Samples, stats.ConnectedSamples{
-		Samples: []stats.Sample{
-			{Metric: metrics.HTTPReqs, Time: start, Tags: sampleTags, Value: 1},
-			{Metric: metrics.HTTPReqConnecting, Time: start, Tags: sampleTags, Value: connectionDuration},
-		},
-		Tags: sampleTags,
-		Time: start,
-	})
 
 	if err != nil {
-		fmt.Println(fmt.Sprintf("errorfound %s", err))
+		fmt.Printf("errorfound %s\n", err)
 		return nil, common.NewInitContextError(fmt.Sprintf("Dial error %s", err))
 
 	}
@@ -113,6 +104,25 @@ func (*TlsTcp) Connect(ctx context.Context, network string, addr string, root_ca
 	conn := tls.Client(conon, tlsConfig)
 	//tracerTransport := httpext.newTransport(ctx, state, tags)
 
+	startHS := time.Now()
+	err = conn.Handshake()
+	endHS := time.Now()
+	hsDuration := stats.D(endHS.Sub(startHS))
+
+	if err != nil {
+		fmt.Printf("handshake failure: %s", err.Error())
+		return nil, err
+	}
+
+	stats.PushIfNotDone(ctx, state.Samples, stats.ConnectedSamples{
+		Samples: []stats.Sample{
+			{Metric: metrics.HTTPReqs, Time: start, Tags: sampleTags, Value: 1},
+			{Metric: metrics.HTTPReqConnecting, Time: start, Tags: sampleTags, Value: connectionDuration},
+			{Metric: metrics.HTTPReqTLSHandshaking, Time: startHS, Tags: sampleTags, Value: hsDuration},
+		},
+		Tags: sampleTags,
+		Time: start,
+	})
 	return conn, nil
 }
 
@@ -122,7 +132,12 @@ func (*TlsTcp) CloseConn(ctx context.Context, requester *tls.Conn, data string) 
 }
 
 //Send bytes to a socket
-func (*TlsTcp) Send(ctx context.Context, requester *tls.Conn, data []byte) {
+func (*TlsTcp) Send(ctx context.Context, requester *tls.Conn, datastr string) {
+	//fmt.Println("sending bytes")
+	data, err := base64.StdEncoding.DecodeString(datastr)
+	if err != nil {
+		log.Fatalf("Some error occured during base64 decode. Error %s", err.Error())
+	}
 
 	bufHeader := make([]byte, 4)
 	//fmt.Printf("request size without headers %d bytes: %v\n ", len(data), data)
@@ -135,36 +150,62 @@ func (*TlsTcp) Send(ctx context.Context, requester *tls.Conn, data []byte) {
 	copy(singlePacket[:], bufHeader[:])
 	copy(singlePacket[len(bufHeader):], data[:])
 
+	sendStart := time.Now()
 	_, error := requester.Write(singlePacket)
-	//fmt.Printf("write ret code: %d \n ", cd)
+	sendEnd := time.Now()
+	sendDuration := stats.D(sendEnd.Sub(sendStart))
+	state := lib.GetState(ctx)
+	stats.PushIfNotDone(ctx, state.Samples, stats.ConnectedSamples{
+		Samples: []stats.Sample{
+			{Metric: metrics.HTTPReqSending, Time: sendStart, Value: sendDuration},
+		},
+		Time: sendStart,
+	})
 
 	if error != nil {
 		fmt.Println("send failure")
-		fmt.Printf("send failure %s", error.Error())
+		fmt.Printf("send failure: %s\n", error.Error())
+		return
 	}
 }
 
 //Receive bytes from socket
-func (*TlsTcp) Receive(ctx context.Context, requester *tls.Conn, data []byte) []byte {
+func (*TlsTcp) Receive(ctx context.Context, requester *tls.Conn) []byte {
+	//fmt.Println("receiving bytes")
 
-	var arr []byte
-	_, error := requester.Read(arr)
+	header_replay := make([]byte, 4)
+
+	recvHeaderStart := time.Now()
+	_, error := requester.Read(header_replay)
+	recvHeaderEnd := time.Now()
+	recvHeaderDuration := stats.D(recvHeaderEnd.Sub(recvHeaderStart))
+
 	if error != nil {
-		fmt.Println("failed to read")
-		return arr
+		fmt.Printf("failed to read header: %s\n", error.Error())
+		return header_replay
 	}
-	//fmt.Printf("lenght received %d\n", len(arr))
-	return arr
-}
+	expectedLengh := binary.LittleEndian.Uint32(header_replay)
 
-//custom root chain https://gist.github.com/StevenACoffman/844ad083a2b2998c67c6ff7b56710851
-// type Client struct {
-//     conn *tls.Conn
-// }
-// // XClient represents the Client constructor (i.e. `new redis.Client()`) and
-// // returns a new Redis client object.
-// func (r *TlsTcp) XClient(ctxPtr *context.Context, conf *tls.Config) interface{} {
-//     rt := common.GetRuntime(*ctxPtr)
-//     //{client: conn}
-//     return common.Bind(rt, &Client{conn: conn}, ctxPtr)
-// }
+	//fmt.Printf("lenght received %d\n", expectedLengh)
+
+	receivedContent := make([]byte, expectedLengh)
+
+	recvStart := time.Now()
+	_, error = requester.Read(receivedContent)
+	recvEnd := time.Now()
+	recvDuration := stats.D(recvEnd.Sub(recvStart)) + recvHeaderDuration
+	//todo error check state value
+	state := lib.GetState(ctx)
+	stats.PushIfNotDone(ctx, state.Samples, stats.ConnectedSamples{
+		Samples: []stats.Sample{
+			{Metric: metrics.HTTPReqReceiving, Time: recvStart, Value: recvDuration},
+		},
+		Time: recvStart,
+	})
+
+	if error != nil {
+		fmt.Printf("failed to read header: %s\n", error.Error())
+		return receivedContent
+	}
+	return receivedContent
+}

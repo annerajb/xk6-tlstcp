@@ -57,7 +57,7 @@
                 "showReuseMessage": false,
                 "clear": true
             },
-            "command":"cd ../xk6 && xk6 build v0.29.0 --with github.com/annerajb/xk6-tlstcp=\"$(pwd)/../xk6-tls\"",
+            "command":"./xk6 build v0.4.5 --with github.com/annerajb/xk6-tlstcp=\"$(pwd)\"",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -76,9 +76,9 @@
                 "focus": true,
                 "panel": "dedicated",
                 "showReuseMessage": true,
-                "clear": false
+                "clear": true
             },
-            "command":"../xk6/k6 run ${input:load} sample_test.js",
+            "command": "./k6 run ${input:load} sample_test.js",
             "group": {
                 "kind": "test",
                 "isDefault": true,
