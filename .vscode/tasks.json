@@ -15,7 +15,7 @@
                 },
                 {
                     "label": "100x10s",
-                    "value": "--vus 100 --duration 10s"
+                    "value": "--vus 100 --iterations 400 --duration 10s"
                 }
                 ,
                 {
@@ -78,16 +78,28 @@
                 "showReuseMessage": true,
                 "clear": true
             },
-            "command": "./k6 run ${input:load} sample_test.js",
+            "command": "./xk6 run -e MY_HOSTNAME=localhost:8123 ${input:load} sample_test.js",
             "group": {
                 "kind": "test",
                 "isDefault": true,
             },
         },
         {
-            "label": "go build tlstcp-standalone.go && ./tlstcp-standalone",
+            "label": "go build tlstcpstandalone.go",
             "type": "shell",
-            "command": "go build tlstcp-standalone.go && ./tlstcp-standalone",
+            "command": "go build tlstcpstandalone.go",
+            "problemMatcher": [
+                "$go"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "go build udpstandalone.go",
+            "type": "shell",
+            "command": "go build udpstandalone.go",
             "problemMatcher": [
                 "$go"
             ],
@@ -96,5 +108,6 @@
                 "isDefault": true
             }
         }
+
     ]
 }
